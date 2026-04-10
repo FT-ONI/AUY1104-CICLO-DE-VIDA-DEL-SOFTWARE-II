@@ -1,0 +1,71 @@
+name: Integración CI/CD - Node.js y AWS ECR
+
+on:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  # ==========================================
+  # FASE 1: Integración Continua (CI)
+  # ==========================================
+  ci-validation:
+    name: Validación del Código (CI)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js v20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Verificación de Compliance (Seguridad)
+        run: npm audit
+
+      - name: Ejecución de Pruebas Unitarias
+        run: npm test
+
+  # ==========================================
+  # FASE 2: Despliegue Continuo (CD)
+  # ==========================================
+  cd-deployment:
+    name: Contenerización y Registro ECR (CD)
+    needs: ci-validation # ¡ESTA ES LA PUERTA DE CALIDAD (GATE)!
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Login en Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Construir, etiquetar y subir imagen a AWS
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: duoc-lab
+          # Usamos el código único del commit (SHA) como etiqueta, como pide tu guía
+          IMAGE_TAG: ${{ github.sha }} 
+          LATEST_TAG: latest
+        run: |
+          echo "Construyendo imagen Docker..."
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          
+          echo "Agregando etiqueta 'latest'..."
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$LATEST_TAG
+          
+          echo "Subiendo imágenes a ECR..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$LATEST_TAG
